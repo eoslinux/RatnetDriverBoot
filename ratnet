@@ -1,0 +1,181 @@
+#!/bin/bash
+
+# Проверка, что запущено от root
+if [[ $EUID -ne 0 ]]; then
+   echo "Этот скрипт должен быть запущен с правами root" 
+   exit 1
+fi
+
+# Функция для очистки терминала и установки цвета
+reset
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+# ASCII ART для RATNET (мрачный стиль)
+echo -e "${GREEN}"
+cat << "EOF"
+
+______   ___   _____         ______ ______  _____  _   _  _____ ______ 
+| ___ \ / _ \ |_   _|        |  _  \| ___ \|_   _|| | | ||  ___|| ___ \
+| |_/ // /_\ \  | |          | | | || |_/ /  | |  | | | || |__  | |_/ /
+|    / |  _  |  | |          | | | ||    /   | |  | | | ||  __| |    / 
+| |\ \ | | | |  | |          | |/ / | |\ \  _| |_ \ \_/ /| |___ | |\ \ 
+\_| \_|\_| |_/  \_/          |___/  \_| \_| \___/  \___/ \____/ \_| \_|
+                      ______                                           
+                     |______|                              
+                                            
+      R A T N E T   D R I V E R   B O O T
+EOF
+echo -e "${NC}"
+
+# Прогресс-бар
+progress_bar() {
+    local duration=${1}
+    local bar="|"
+    local current=0
+    local percentage
+    while [ $current -le $duration ]; do
+        percentage=$((current * 100 / duration))
+        printf "\r[%-50s] %d%%" "$bar" "$percentage"
+        sleep 0.1
+        current=$((current + duration / 50))
+        bar="${bar}="
+    done
+    printf "\n"
+}
+
+# Путь к загрузкам и временным файлам
+DOWNLOAD_DIR="/home/user/Загрузки"
+DRIVER_ARCHIVE="$DOWNLOAD_DIR/ALSE16-NVidia-all-230704.tar.gz"
+EXTRACT_DIR="/srv"
+REPO_LINE="deb file:/srv/ALSE16-NVidia-all-230704 smolensk non-free"
+
+# Основной массив задач
+tasks=(
+    "Настройка репозиториев Astra Linux"
+    "Обновление списка пакетов"
+    "Скачивание архива драйверов"
+    "Распаковка архива в /srv"
+    "Добавление локального репозитория"
+    "Обновление пакетов после добавления локального репо"
+    "Установка nvidia-detect-470"
+    "Установка nvidia-driver-470"
+    "Очистка временных файлов"
+)
+
+total_tasks=${#tasks[@]}
+completed=0
+
+# Функция обновления прогресса
+update_progress() {
+    completed=$((completed + 1))
+    echo "[${completed}/${total_tasks}] $1"
+    sleep 0.5
+}
+
+# Шаг 1: Резервное копирование и замена sources.list на указанные репозитории
+echo "${tasks[0]}..."
+cp /etc/apt/sources.list /etc/apt/sources.list.bak 2>/dev/null || true
+
+cat > /etc/apt/sources.list << 'EOF'
+deb https://dl.astralinux.ru/astra/stable/1.6_x86-64/repository smolensk main contrib non-free
+deb https://dl.astralinux.ru/astra/stable/1.6_x86-64/repository-update/ smolensk main contrib non-free
+deb https://dl.astralinux.ru/astra/stable/1.6_x86-64/repository-dev/ smolensk main contrib non-free
+deb https://dl.astralinux.ru/astra/stable/1.6_x86-64/repository-dev-update/ smolensk main contrib non-free
+EOF
+
+update_progress "${tasks[0]}"
+
+# Шаг 2: Апдейт пакетов
+echo "${tasks[1]}..."
+apt update &>/dev/null
+if [ $? -ne 0 ]; then
+    echo "❌ Ошибка обновления списка пакетов. Проверьте подключение и репозитории."
+    exit 1
+fi
+update_progress "${tasks[1]}"
+
+# Шаг 3: Скачивание архива
+echo "${tasks[2]}..."
+mkdir -p "$DOWNLOAD_DIR"
+rm -f "$DRIVER_ARCHIVE"
+
+wget -q --show-progress "https://disk.astralinux.ru/s/nbmPKskMkQG7Xrc/download/ALSE16-NVidia-all-230704.tar.gz" -O "$DRIVER_ARCHIVE"
+
+if [ $? -ne 0 ] || [ ! -f "$DRIVER_ARCHIVE" ]; then
+    echo "❌ Ошибка: Не удалось скачать архив драйверов."
+    exit 1
+fi
+update_progress "${tasks[2]}"
+
+# Шаг 4: Распаковка в /srv
+echo "${tasks[3]}..."
+rm -rf /srv/ALSE16-NVidia-all-230704 2>/dev/null
+mkdir -p /srv
+tar -xzf "$DRIVER_ARCHIVE" -C /srv || {
+    echo "❌ Ошибка распаковки архива."
+    exit 1
+}
+update_progress "${tasks[3]}"
+
+# Шаг 5: Добавление локального репозитория
+echo "${tasks[4]}..."
+sed -i "\|$REPO_LINE|d" /etc/apt/sources.list
+echo "$REPO_LINE" >> /etc/apt/sources.list
+update_progress "${tasks[4]}"
+
+# Шаг 6: Апдейт после добавления локального репо
+echo "${tasks[5]}..."
+apt update &>/dev/null
+if [ $? -ne 0 ]; then
+    echo "❌ Ошибка обновления после добавления локального репозитория."
+    exit 1
+fi
+update_progress "${tasks[5]}"
+
+# Шаг 7: Установка nvidia-detect-470
+echo "${tasks[6]}..."
+apt install -y nvidia-detect-470
+if [ $? -ne 0 ]; then
+    echo "❌ Ошибка установки nvidia-detect-470"
+    exit 1
+fi
+update_progress "${tasks[6]}"
+
+# Шаг 8: Установка nvidia-driver-470
+echo "${tasks[7]}..."
+apt install -y nvidia-driver-470
+if [ $? -ne 0 ]; then
+    echo "❌ Ошибка установки nvidia-driver-470"
+    exit 1
+fi
+update_progress "${tasks[7]}"
+
+# Шаг 9: Очистка
+echo "${tasks[8]}..."
+rm -f "$DRIVER_ARCHIVE"
+sed -i "\|$REPO_LINE|d" /etc/apt/sources.list
+rm -rf /srv/ALSE16-NVidia-all-230704
+apt autoremove -y &>/dev/null
+apt clean &>/dev/null
+update_progress "${tasks[8]}"
+
+# Финальное сообщение
+echo -e "${GREEN}"
+cat << "EOF"
+
+______   ___   _____          _____  _   _ ______ 
+| ___ \ / _ \ |_   _|        |  ___|| \ | ||  _  \
+| |_/ // /_\ \  | |          | |__  |  \| || | | |
+|    / |  _  |  | |          |  __| | . ` || | | |
+| |\ \ | | | |  | |          | |___ | |\  || |/ / 
+\_| \_|\_| |_/  \_/          \____/ \_| \_/|___/  
+                      ______                      
+                     |______|                     
+                                 
+  Драйверы NVIDIA успешно установлены, а может и нет. Хуй знает
+  Перезагрузите систему: reboot
+EOF
+echo -e "${NC}"
+
+exit 0
